@@ -376,7 +376,7 @@ def generar_dashboard_html(registros_db):
                         <div>
                             <div class="flex justify-between items-center mb-2">
                                 <span class="font-bold text-base text-slate-900">\${item.placa} <span class="text-xs font-normal text-slate-500">(\${item.id_actual})</span></span>
-                                <span class="text-xs font-bold px-2.5 py-1 rounded-full \${esActiva ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}">\${item.estatus}</span>
+                                <span class="text-xs font-bold px-2.5 py-1 rounded-full \${<span class="text-xs font-bold px-2.5 py-1 rounded-full \${esActiva ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">\${item.estatus}</span>}">\${item.estatus}</span>
                             </div>
                             <p class="text-xs text-slate-600 font-medium">Sucursal: \${item.num_sucursal} - \${item.nombre_sucursal}</p>
                             <p class="text-xs text-slate-500">Analista: \${item.analista} | Conductor: \${item.conductor}</p>
