@@ -34,4 +34,6 @@ jobs:
           EMAIL_DESTINO: ${{ secrets.EMAIL_DESTINO }}
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           PAGES_URL: ${{ secrets.PAGES_URL }}
+          CDMX_USER: ${{ secrets.CDMX_USER }}
+          CDMX_PASS: ${{ secrets.CDMX_PASS }}
         run: python bot_multas.py
