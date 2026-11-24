@@ -422,6 +422,16 @@ def enviar_correo():
         server.login(GMAIL_USER, GMAIL_PASS)
         server.sendmail(GMAIL_USER, EMAIL_DESTINO, msg.as_string())
 
+def buscar_col(encabezados_norm, candidatos, default=None):
+    for cand in candidatos:
+        if cand in encabezados_norm:
+            return encabezados_norm.index(cand)
+    for idx, h in enumerate(encabezados_norm):
+        for cand in candidatos:
+            if cand in h:
+                return idx
+    return default
+
 # --- 9. EJECUCIÓN DEL FLUJO PRINCIPAL ---
 if __name__ == "__main__":
     valores_hist = hoja_historial.get_all_values()
@@ -451,15 +461,19 @@ if __name__ == "__main__":
 
     todas_filas = hoja_placas.get_all_values()
     encabezados = [h.strip() for h in todas_filas[0]]
+    encabezados_norm = [h.lower() for h in encabezados]
 
-    col_placa = encabezados.index("Placa actual")
-    col_id = encabezados.index("ID Actual")
-    col_num_suc = encabezados.index("Num_Sucursal")
-    col_nom_suc = encabezados.index("Nombre_Sucursal")
-    col_analista = encabezados.index("Nombre del Analista")
-    col_conductor = encabezados.index("Nombre de conductor")
-    col_rev = encabezados.index("Ultima_Revision") + 1
-    col_est = encabezados.index("Estatus_Conexion") + 1
+    col_placa = buscar_col(encabezados_norm, ["placa actual", "placa"], 0)
+    col_id = buscar_col(encabezados_norm, ["id actual", "id"])
+    col_num_suc = buscar_col(encabezados_norm, ["num_sucursal", "num sucursal", "no. sucursal", "numero sucursal", "sucursal"])
+    col_nom_suc = buscar_col(encabezados_norm, ["nombre_sucursal", "nombre sucursal"])
+    col_analista = buscar_col(encabezados_norm, ["nombre del analista", "analista", "nombre analista"])
+    col_conductor = buscar_col(encabezados_norm, ["nombre de conductor", "conductor", "nombre conductor"])
+    col_rev_idx = buscar_col(encabezados_norm, ["ultima_revision", "ultima revision", "última revisión"])
+    col_est_idx = buscar_col(encabezados_norm, ["estatus_conexion", "estatus conexion", "estatus"])
+
+    col_rev = (col_rev_idx + 1) if col_rev_idx is not None else (len(encabezados) + 1)
+    col_est = (col_est_idx + 1) if col_est_idx is not None else (len(encabezados) + 2)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -468,16 +482,16 @@ if __name__ == "__main__":
         page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         for idx, fila in enumerate(todas_filas[1:]):
-            if len(fila) <= col_placa or not fila[col_placa].strip():
+            if col_placa is None or len(fila) <= col_placa or not fila[col_placa].strip():
                 continue
 
             unidad_info = {
                 "placa": fila[col_placa].strip().upper(),
-                "id_actual": fila[col_id].strip() if len(fila) > col_id else "",
-                "num_sucursal": fila[col_num_suc].strip() if len(fila) > col_num_suc else "",
-                "nombre_sucursal": fila[col_nom_suc].strip() if len(fila) > col_nom_suc else "",
-                "analista": fila[col_analista].strip() if len(fila) > col_analista else "",
-                "conductor": fila[col_conductor].strip() if len(fila) > col_conductor else ""
+                "id_actual": fila[col_id].strip() if col_id is not None and len(fila) > col_id else "",
+                "num_sucursal": fila[col_num_suc].strip() if col_num_suc is not None and len(fila) > col_num_suc else "",
+                "nombre_sucursal": fila[col_nom_suc].strip() if col_nom_suc is not None and len(fila) > col_nom_suc else "",
+                "analista": fila[col_analista].strip() if col_analista is not None and len(fila) > col_analista else "",
+                "conductor": fila[col_conductor].strip() if col_conductor is not None and len(fila) > col_conductor else ""
             }
 
             ok_cdmx, m_cdmx = consultar_cdmx(page, unidad_info["placa"])
