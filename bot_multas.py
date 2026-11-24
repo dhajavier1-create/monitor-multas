@@ -17,7 +17,11 @@ GMAIL_USER = os.environ["GMAIL_USER"]
 GMAIL_PASS = os.environ["GMAIL_PASS"]
 EMAIL_DESTINO = os.environ["EMAIL_DESTINO"]
 GOOGLE_CREDS_JSON = json.loads(os.environ["GOOGLE_CREDS_JSON"])
-BASE_URL_WEB = os.environ.get("GITHUB_PAGES_URL", "").rstrip("/")
+BASE_URL_WEB = (
+    os.environ.get("PAGES_URL")
+    or os.environ.get("GITHUB_PAGES_URL")
+    or ""
+).strip().rstrip("/")
 
 # Carpeta para almacenar PDFs que generará el bot para la Web App
 os.makedirs("docs/pdf", exist_ok=True)
@@ -371,25 +375,26 @@ def generar_dashboard_html(registros_db):
             contenedor.innerHTML = '';
             datos.filter(d => d.placa.toLowerCase().includes(texto) || d.analista.toLowerCase().includes(texto) || d.folio.toLowerCase().includes(texto) || d.nombre_sucursal.toLowerCase().includes(texto)).forEach(item => {{
                 const esActiva = item.estatus === 'ACTIVA';
+                const badgeClass = esActiva ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700';
                 contenedor.innerHTML += `
                     <div class="bg-white p-4 rounded-xl border shadow-sm flex flex-col justify-between">
                         <div>
                             <div class="flex justify-between items-center mb-2">
-                                <span class="font-bold text-base text-slate-900">\${item.placa} <span class="text-xs font-normal text-slate-500">(\${item.id_actual})</span></span>
-                                <span class="text-xs font-bold px-2.5 py-1 rounded-full \${<span class="text-xs font-bold px-2.5 py-1 rounded-full \${esActiva ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">\${item.estatus}</span>}">\${item.estatus}</span>
+                                <span class="font-bold text-base text-slate-900">\${{item.placa}} <span class="text-xs font-normal text-slate-500">(\${{item.id_actual}})</span></span>
+                                <span class="text-xs font-bold px-2.5 py-1 rounded-full \${{badgeClass}}">\${{item.estatus}}</span>
                             </div>
-                            <p class="text-xs text-slate-600 font-medium">Sucursal: \${item.num_sucursal} - \${item.nombre_sucursal}</p>
-                            <p class="text-xs text-slate-500">Analista: \${item.analista} | Conductor: \${item.conductor}</p>
+                            <p class="text-xs text-slate-600 font-medium">Sucursal: \${{item.num_sucursal}} - \${{item.nombre_sucursal}}</p>
+                            <p class="text-xs text-slate-500">Analista: \${{item.analista}} | Conductor: \${{item.conductor}}</p>
                             <div class="my-3 p-2.5 bg-slate-50 rounded-lg text-xs space-y-1">
-                                <p><span class="font-semibold">Folio:</span> \${item.folio} (\${item.entidad})</p>
-                                <p><span class="font-semibold">Motivo:</span> \${item.motivo}</p>
-                                <p><span class="font-semibold">Monto:</span> <span class="text-red-600 font-bold">\${item.monto.toLocaleString('es-MX', {{style:'currency', currency:'MXN'}})}</span></p>
-                                <p><span class="font-semibold">Límite Pago:</span> \${item.limite} (\${item.dias_vencer} días)</p>
+                                <p><span class="font-semibold">Folio:</span> \${{item.folio}} (\${{item.entidad}})</p>
+                                <p><span class="font-semibold">Motivo:</span> \${{item.motivo}}</p>
+                                <p><span class="font-semibold">Monto:</span> <span class="text-red-600 font-bold">\${{item.monto.toLocaleString('es-MX', {{{{style:'currency', currency:'MXN'}}}})}}</span></p>
+                                <p><span class="font-semibold">Límite Pago:</span> \${{item.limite}} (\${{item.dias_vencer}} días)</p>
                             </div>
                         </div>
                         <div class="grid grid-cols-2 gap-2 pt-2 border-t">
-                            <a href="\${item.url_linea}" target="_blank" class="text-center bg-blue-600 hover:bg-blue-700 text-white py-1.5 rounded-lg text-xs font-semibold transition">📄 Línea Captura</a>
-                            <a href="\${item.url_boleta}" target="_blank" class="text-center bg-slate-700 hover:bg-slate-800 text-white py-1.5 rounded-lg text-xs font-semibold transition">📸 Ver Boleta</a>
+                            <a href="\${{item.url_linea}}" target="_blank" class="text-center bg-blue-600 hover:bg-blue-700 text-white py-1.5 rounded-lg text-xs font-semibold transition">📄 Línea Captura</a>
+                            <a href="\${{item.url_boleta}}" target="_blank" class="text-center bg-slate-700 hover:bg-slate-800 text-white py-1.5 rounded-lg text-xs font-semibold transition">📸 Ver Boleta</a>
                         </div>
                     </div>`;
             }});
