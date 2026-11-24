@@ -255,4 +255,242 @@ def formatear_sheets():
                         "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE"
                     }
                 },
-                "fields": "userEnteredFormat(backgroundColor,textFormat,
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+            }
+        },
+        {
+            "updateSheetProperties": {
+                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 2}},
+                "fields": "gridProperties.frozenRowCount"
+            }
+        }
+    ]
+
+    if total_filas > 2:
+        requests_formato.append({
+            "updateBorders": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": total_filas, "startColumnIndex": 0, "endColumnIndex": 18},
+                "top": {"style": "SOLID", "color": {"red": 0.75, "green": 0.75, "blue": 0.75}},
+                "bottom": {"style": "SOLID", "color": {"red": 0.75, "green": 0.75, "blue": 0.75}},
+                "left": {"style": "SOLID", "color": {"red": 0.75, "green": 0.75, "blue": 0.75}},
+                "right": {"style": "SOLID", "color": {"red": 0.75, "green": 0.75, "blue": 0.75}},
+                "innerHorizontal": {"style": "SOLID", "color": {"red": 0.88, "green": 0.88, "blue": 0.88}},
+                "innerVertical": {"style": "SOLID", "color": {"red": 0.88, "green": 0.88, "blue": 0.88}}
+            }
+        })
+
+        requests_formato.append({
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 2, "endRowIndex": total_filas, "startColumnIndex": 10, "endColumnIndex": 11},
+                "cell": {
+                    "userEnteredFormat": {
+                        "numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"},
+                        "textFormat": {"bold": True}
+                    }
+                },
+                "fields": "userEnteredFormat(numberFormat,textFormat)"
+            }
+        })
+
+        datos_hist = hoja_historial.get_all_values()[2:]
+        for idx, fila in enumerate(datos_hist):
+            if len(fila) >= 15:
+                estatus = fila[14].strip().upper()
+                bg = {"red": 0.99, "green": 0.89, "blue": 0.89} if estatus == "ACTIVA" else {"red": 0.86, "green": 0.96, "blue": 0.90}
+                fg = {"red": 0.72, "green": 0.11, "blue": 0.11} if estatus == "ACTIVA" else {"red": 0.06, "green": 0.45, "blue": 0.25}
+
+                requests_formato.append({
+                    "repeatCell": {
+                        "range": {"sheetId": sheet_id, "startRowIndex": idx + 2, "endRowIndex": idx + 3, "startColumnIndex": 14, "endColumnIndex": 15},
+                        "cell": {
+                            "userEnteredFormat": {
+                                "backgroundColor": bg,
+                                "textFormat": {"foregroundColor": fg, "bold": True},
+                                "horizontalAlignment": "CENTER"
+                            }
+                        },
+                        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+                    }
+                })
+
+        requests_formato.append({
+            "autoResizeDimensions": {
+                "dimensions": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 18}
+            }
+        })
+
+    sheet.batch_update({"requests": requests_formato})
+
+# --- 7. GENERACIÓN DEL DASHBOARD HTML AUTOMÁTICO ---
+def generar_dashboard_html(registros_db):
+    todas = [info["data"] for info in registros_db.values()]
+    activas = [r for r in todas if r[14] == "ACTIVA"]
+    pagadas = [r for r in todas if r[14] == "PAGADA"]
+    monto_activo = sum(float(r[10]) for r in activas)
+    monto_pagado = sum(float(r[10]) for r in pagadas)
+
+    datos_json = json.dumps([
+        {
+            "folio": r[0], "placa": r[1], "id_actual": r[2], "num_sucursal": r[3],
+            "nombre_sucursal": r[4], "analista": r[5], "conductor": r[6], "entidad": r[7],
+            "fecha": r[8], "motivo": r[9], "monto": float(r[10]), "municipio": r[11],
+            "limite": r[12], "dias_vencer": r[13], "estatus": r[14], "url_linea": r[15], "url_boleta": r[16]
+        }
+        for r in reversed(todas)
+    ], ensure_ascii=False)
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flotilla | Control de Infracciones</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 pb-10">
+    <header class="bg-slate-900 text-white sticky top-0 z-20 shadow-md">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+            <h1 class="text-lg font-bold">🚦 Control de Multas</h1>
+            <span class="text-xs text-slate-300">Actualizado: {datetime.now().strftime('%d/%m/%Y %H:%M')}</span>
+        </div>
+    </header>
+    <main class="max-w-7xl mx-auto px-4 pt-5">
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div class="bg-white p-4 rounded-xl border-l-4 border-red-500 shadow-sm"><p class="text-xs text-slate-500">Activas</p><p class="text-2xl font-bold text-red-600">{len(activas)}</p></div>
+            <div class="bg-white p-4 rounded-xl border-l-4 border-amber-500 shadow-sm"><p class="text-xs text-slate-500">Adeudo Total</p><p class="text-2xl font-bold">${monto_activo:,.0f}</p></div>
+            <div class="bg-white p-4 rounded-xl border-l-4 border-emerald-500 shadow-sm"><p class="text-xs text-slate-500">Pagadas</p><p class="text-2xl font-bold text-emerald-600">{len(pagadas)}</p></div>
+            <div class="bg-white p-4 rounded-xl border-l-4 border-blue-500 shadow-sm"><p class="text-xs text-slate-500">Total Pagado</p><p class="text-2xl font-bold">${monto_pagado:,.0f}</p></div>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow-sm mb-5">
+            <input type="text" id="buscador" placeholder="🔍 Buscar por placa, sucursal, analista o folio..." class="w-full px-3 py-2 border rounded-lg text-sm">
+        </div>
+        <div id="vista-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    </main>
+    <script>
+        const datos = {datos_json};
+        function renderizar() {{
+            const texto = document.getElementById('buscador').value.toLowerCase();
+            const contenedor = document.getElementById('vista-cards');
+            contenedor.innerHTML = '';
+            datos.filter(d => d.placa.toLowerCase().includes(texto) || d.analista.toLowerCase().includes(texto) || d.folio.toLowerCase().includes(texto) || d.nombre_sucursal.toLowerCase().includes(texto)).forEach(item => {{
+                const esActiva = item.estatus === 'ACTIVA';
+                const badgeClass = esActiva ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700';
+                contenedor.innerHTML += `
+                    <div class="bg-white p-4 rounded-xl border shadow-sm flex flex-col justify-between">
+                        <div>
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="font-bold text-base text-slate-900">\${{item.placa}} <span class="text-xs font-normal text-slate-500">(\${{item.id_actual}})</span></span>
+                                <span class="text-xs font-bold px-2.5 py-1 rounded-full \${{badgeClass}}">\${{item.estatus}}</span>
+                            </div>
+                            <p class="text-xs text-slate-600 font-medium">Sucursal: \${{item.num_sucursal}} - \${{item.nombre_sucursal}}</p>
+                            <p class="text-xs text-slate-500">Analista: \${{item.analista}} | Conductor: \${{item.conductor}}</p>
+                            <div class="my-3 p-2.5 bg-slate-50 rounded-lg text-xs space-y-1">
+                                <p><span class="font-semibold">Folio:</span> \${{item.folio}} (\${{item.entidad}})</p>
+                                <p><span class="font-semibold">Motivo:</span> \${{item.motivo}}</p>
+                                <p><span class="font-semibold">Monto:</span> <span class="text-red-600 font-bold">\${{item.monto.toLocaleString('es-MX', {{{{style:'currency', currency:'MXN'}}}})}}</span></p>
+                                <p><span class="font-semibold">Límite Pago:</span> \${{item.limite}} (\${{item.dias_vencer}} días)</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 pt-2 border-t">
+                            <a href="\${{item.url_linea}}" target="_blank" class="text-center bg-blue-600 hover:bg-blue-700 text-white py-1.5 rounded-lg text-xs font-semibold transition">📄 Línea Captura</a>
+                            <a href="\${{item.url_boleta}}" target="_blank" class="text-center bg-slate-700 hover:bg-slate-800 text-white py-1.5 rounded-lg text-xs font-semibold transition">📸 Ver Boleta</a>
+                        </div>
+                    </div>`;
+            }});
+        }}
+        document.getElementById('buscador').addEventListener('input', renderizar);
+        renderizar();
+    </script>
+</body>
+</html>
+"""
+    os.makedirs("docs", exist_ok=True)
+    with open("docs/index.html", "w", encoding="utf-8") as f:
+        f.write(html)
+
+# --- 8. ENVÍO AUTOMÁTICO DE ALERTAS POR EMAIL ---
+def enviar_correo():
+    if not alertas_del_dia:
+        return
+    cuerpo = "Resumen de alertas del día detectadas por el Bot de Infracciones:\n\n" + "\n\n".join(alertas_del_dia)
+    msg = MIMEText(cuerpo)
+    msg["Subject"] = f"🚦 Alertas de Infracciones Flotilla ({len(alertas_del_dia)} novedades)"
+    msg["From"] = GMAIL_USER
+    msg["To"] = EMAIL_DESTINO
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(GMAIL_USER, GMAIL_PASS)
+        server.sendmail(GMAIL_USER, EMAIL_DESTINO, msg.as_string())
+
+# --- 9. EJECUCIÓN DEL FLUJO PRINCIPAL ---
+if __name__ == "__main__":
+    valores_hist = hoja_historial.get_all_values()
+    filas_hist = valores_hist[2:] if len(valores_hist) > 2 else []
+
+    registros_db = {}
+    for idx, r in enumerate(filas_hist):
+        if r and r[0]:
+            row_limpia = list(r)
+            for col_url in [15, 16]:
+                if len(row_limpia) > col_url and "HIPERVINCULO" in row_limpia[col_url]:
+                    partes = row_limpia[col_url].split('"')
+                    if len(partes) >= 2:
+                        row_limpia[col_url] = partes[1]
+            registros_db[r[0]] = {"fila": idx + 3, "data": row_limpia}
+
+    hoy = datetime.now()
+    for folio, info in registros_db.items():
+        r = info["data"]
+        if len(r) >= 15 and r[14] == "ACTIVA" and r[12]:
+            try:
+                dias = (datetime.strptime(r[12], "%Y-%m-%d") - hoy).days
+                hoja_historial.update_cell(info["fila"], 14, dias)
+                r[13] = dias
+            except ValueError:
+                pass
+
+    todas_filas = hoja_placas.get_all_values()
+    encabezados = [h.strip() for h in todas_filas[0]]
+
+    col_placa = encabezados.index("Placa actual")
+    col_id = encabezados.index("ID Actual")
+    col_num_suc = encabezados.index("Num_Sucursal")
+    col_nom_suc = encabezados.index("Nombre_Sucursal")
+    col_analista = encabezados.index("Nombre del Analista")
+    col_conductor = encabezados.index("Nombre de conductor")
+    col_rev = encabezados.index("Ultima_Revision") + 1
+    col_est = encabezados.index("Estatus_Conexion") + 1
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(accept_downloads=True)
+        page = context.new_page()
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+        for idx, fila in enumerate(todas_filas[1:]):
+            if len(fila) <= col_placa or not fila[col_placa].strip():
+                continue
+
+            unidad_info = {
+                "placa": fila[col_placa].strip().upper(),
+                "id_actual": fila[col_id].strip() if len(fila) > col_id else "",
+                "num_sucursal": fila[col_num_suc].strip() if len(fila) > col_num_suc else "",
+                "nombre_sucursal": fila[col_nom_suc].strip() if len(fila) > col_nom_suc else "",
+                "analista": fila[col_analista].strip() if len(fila) > col_analista else "",
+                "conductor": fila[col_conductor].strip() if len(fila) > col_conductor else ""
+            }
+
+            ok_cdmx, m_cdmx = consultar_cdmx(page, unidad_info["placa"])
+            st_cdmx = procesar_placa(unidad_info, "CDMX", ok_cdmx, m_cdmx, registros_db)
+
+            ok_edomex, m_edomex = consultar_edomex(page, unidad_info["placa"])
+            st_edomex = procesar_placa(unidad_info, "EDOMEX", ok_edomex, m_edomex, registros_db)
+
+            hoja_placas.update_cell(idx + 2, col_rev, hoy.strftime("%Y-%m-%d %H:%M"))
+            hoja_placas.update_cell(idx + 2, col_est, f"CDMX:{st_cdmx} | EDOMEX:{st_edomex}")
+
+        browser.close()
+
+    formatear_sheets()
+    generar_dashboard_html(registros_db)
+    enviar_correo()
