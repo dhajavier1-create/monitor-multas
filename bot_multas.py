@@ -9,7 +9,6 @@ import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth_sync
 
 # --- 1. CARGA DE VARIABLES Y SECRETOS DE ENTORNO ---
 API_KEY_CAPTCHA = os.environ["API_KEY_CAPTCHA"]
@@ -466,7 +465,7 @@ if __name__ == "__main__":
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
-        stealth_sync(page)
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         for idx, fila in enumerate(todas_filas[1:]):
             if len(fila) <= col_placa or not fila[col_placa].strip():
@@ -485,13 +484,4 @@ if __name__ == "__main__":
             st_cdmx = procesar_placa(unidad_info, "CDMX", ok_cdmx, m_cdmx, registros_db)
 
             ok_edomex, m_edomex = consultar_edomex(page, unidad_info["placa"])
-            st_edomex = procesar_placa(unidad_info, "EDOMEX", ok_edomex, m_edomex, registros_db)
-
-            hoja_placas.update_cell(idx + 2, col_rev, hoy.strftime("%Y-%m-%d %H:%M"))
-            hoja_placas.update_cell(idx + 2, col_est, f"CDMX:{st_cdmx} | EDOMEX:{st_edomex}")
-
-        browser.close()
-
-    formatear_sheets()
-    generar_dashboard_html(registros_db)
-    enviar_correo()
+            st_edomex = procesar_placa(
