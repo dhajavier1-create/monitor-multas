@@ -22,7 +22,6 @@ BASE_URL_WEB = (
     or ""
 ).strip().rstrip("/")
 
-# Carpeta para almacenar PDFs que generará el bot para la Web App
 os.makedirs("docs/pdf", exist_ok=True)
 
 # --- 2. CONEXIÓN A GOOGLE SHEETS ---
@@ -38,7 +37,6 @@ alertas_del_dia = []
 
 # --- 3. FUNCIONES AUXILIARES DE CONVERSIÓN Y CAPTCHA ---
 def captura_a_pdf(page, nombre_archivo_pdf):
-    """Toma una captura completa de la pantalla del portal y la convierte a documento PDF."""
     ruta_png = f"temp_{nombre_archivo_pdf}.png"
     ruta_pdf = os.path.join("docs/pdf", nombre_archivo_pdf)
     page.screenshot(path=ruta_png, full_page=True)
@@ -49,49 +47,76 @@ def captura_a_pdf(page, nombre_archivo_pdf):
     return f"{BASE_URL_WEB}/pdf/{nombre_archivo_pdf}" if BASE_URL_WEB else f"pdf/{nombre_archivo_pdf}"
 
 def resolver_captcha_imagen(ruta_img):
-    """Envía la imagen del captcha a 2Captcha y regresa la respuesta resuelta."""
     with open(ruta_img, "rb") as f:
-        r = requests.post("http://2captcha.com/in.php", files={"file": f}, data={"key": API_KEY_CAPTCHA, "method": "post"})
+        r = requests.post(
+            "http://2captcha.com/in.php",
+            files={"file": f},
+            data={"key": API_KEY_CAPTCHA, "method": "post"},
+            timeout=15
+        )
     if "OK|" not in r.text:
-        return ""
+        print(f"⚠️ Error 2Captcha in.php: {r.text}")
+        return "", f"ERR_2CAPTCHA({r.text.strip()})"
     captcha_id = r.text.split("|")[1]
     for _ in range(15):
         time.sleep(4)
-        res = requests.get(f"http://2captcha.com/res.php?key={API_KEY_CAPTCHA}&action=get&id={captcha_id}")
+        res = requests.get(
+            f"http://2captcha.com/res.php?key={API_KEY_CAPTCHA}&action=get&id={captcha_id}",
+            timeout=15
+        )
         if "OK|" in res.text:
-            return res.text.split("|")[1]
-    return ""
+            return res.text.split("|")[1], "OK"
+        if "CAPCHA_NOT_READY" not in res.text:
+            return "", f"ERR_2CAPTCHA({res.text.strip()})"
+    return "", "ERR_CAPTCHA_TIMEOUT"
 
 # --- 4. EXTRACCIÓN Y SCRAPING EN CDMX Y EDOMEX ---
 def consultar_cdmx(page, placa):
-    """Consulta portal CDMX con evasión de bloqueos y resolución de captcha."""
+    """Consulta portal CDMX con tolerancia SSL y diagnóstico detallado."""
     try:
-        page.goto("https://data.finanzas.cdmx.gob.mx/sma/consulta_sedema", timeout=35000)
-        page.fill("input[name='placa']", placa)
-        page.locator("#captcha_img").screenshot(path="cap_cdmx.png")
-        texto_cap = resolver_captcha_imagen("cap_cdmx.png")
-        if not texto_cap:
-            return False, []
-        page.fill("input[name='captcha']", texto_cap)
-        page.click("button[type='submit']")
-        page.wait_for_load_state("networkidle", timeout=20000)
+        resp = page.goto("https://data.finanzas.cdmx.gob.mx/sma/consulta_sedema", wait_until="domcontentloaded", timeout=20000)
+        if not resp or resp.status >= 400:
+            code = resp.status if resp else "SIN_RESPUESTA"
+            print(f"[{placa}] CDMX HTTP {code}")
+            return False, [], f"ERR_HTTP_{code}"
+
+        input_placa = page.locator("input[name='placa'], input#placa").first
+        input_placa.wait_for(state="visible", timeout=8000)
+        input_placa.fill(placa)
+
+        img_cap = page.locator("#captcha_img, img[src*='captcha']").first
+        if img_cap.count() > 0:
+            img_cap.screenshot(path="cap_cdmx.png")
+            texto_cap, est_cap = resolver_captcha_imagen("cap_cdmx.png")
+            if not texto_cap:
+                return False, [], est_cap
+            page.locator("input[name='captcha'], input#captcha").first.fill(texto_cap)
+
+        page.locator("button[type='submit'], input[type='submit']").first.click()
+        page.wait_for_load_state("networkidle", timeout=15000)
 
         html = page.content()
-        if "No se encontraron" in html or "Sin adeudos" in html:
-            return True, []
+        if "captcha" in html.lower() and ("incorrecto" in html.lower() or "inválido" in html.lower()):
+            return False, [], "ERR_CAPTCHA_INCORRECTO"
+
+        if any(txt in html.lower() for txt in ["no se encontraron", "sin adeudos", "no cuenta con adeudos", "0 adeudos"]):
+            return True, [], "OK"
 
         fecha_hoy = datetime.now().strftime("%Y%m%d")
         multas = []
         filas = page.locator("table tbody tr").all()
 
-        for idx, f in enumerate(filas):
+        for f in filas:
             cols = f.locator("td").all_inner_texts()
             if len(cols) >= 4:
                 folio = cols[0].strip()
                 fecha_inf = cols[1].strip()
                 motivo = cols[2].strip()
                 monto_limpio = cols[3].replace("$", "").replace(",", "").strip()
-                monto = float(monto_limpio or 0)
+                try:
+                    monto = float(monto_limpio or 0)
+                except ValueError:
+                    monto = 0.0
 
                 nombre_boleta = f"BOLETA_{placa}_{folio}_{fecha_hoy}.pdf"
                 url_boleta = captura_a_pdf(page, nombre_boleta)
@@ -117,22 +142,36 @@ def consultar_cdmx(page, placa):
                     "folio": folio, "fecha": fecha_inf, "motivo": motivo,
                     "monto": monto, "municipio": "CDMX", "url_boleta": url_boleta, "url_linea": url_linea
                 })
-        return (len(multas) > 0), multas
-    except Exception:
-        return False, []
+        return True, multas, "OK"
+    except Exception as e:
+        err_corto = type(e).__name__
+        print(f"[{placa}] Error CDMX ({err_corto}): {str(e)[:150]}")
+        return False, [], f"ERR_{err_corto}"
 
 def consultar_edomex(page, placa):
-    """Consulta portal del Estado de México."""
+    """Consulta portal del Estado de México con diagnóstico detallado."""
     try:
-        page.goto("https://infracciones.ssedomex.gob.mx/", timeout=35000)
-        time.sleep(4)
-        page.fill("input[placeholder*='Placa'], input[name*='placa']", placa)
-        page.keyboard.press("Enter")
-        page.wait_for_load_state("networkidle", timeout=25000)
+        resp = page.goto("https://infracciones.ssedomex.gob.mx/", wait_until="domcontentloaded", timeout=20000)
+        if not resp or resp.status >= 400:
+            code = resp.status if resp else "SIN_RESPUESTA"
+            print(f"[{placa}] EDOMEX HTTP {code}")
+            return False, [], f"ERR_HTTP_{code}"
+
+        input_placa = page.locator("input[placeholder*='Placa' i], input[name*='placa' i], input[type='text']").first
+        input_placa.wait_for(state="visible", timeout=8000)
+        input_placa.fill(placa)
+
+        btn_buscar = page.locator("button[type='submit'], button:has-text('Buscar'), button:has-text('Consultar')").first
+        if btn_buscar.count() > 0:
+            btn_buscar.click()
+        else:
+            page.keyboard.press("Enter")
+
+        page.wait_for_load_state("networkidle", timeout=15000)
 
         html = page.content()
-        if "No se encontraron infracciones" in html or "sin adeudo" in html.lower():
-            return True, []
+        if any(txt in html.lower() for txt in ["no se encontraron", "sin adeudo", "sin infracciones", "no existen registros"]):
+            return True, [], "OK"
 
         fecha_hoy = datetime.now().strftime("%Y%m%d")
         multas = []
@@ -145,7 +184,10 @@ def consultar_edomex(page, placa):
                 fecha_inf = cols[1].strip()
                 motivo = cols[2].strip()
                 monto_limpio = cols[3].replace("$", "").replace(",", "").strip()
-                monto = float(monto_limpio or 0)
+                try:
+                    monto = float(monto_limpio or 0)
+                except ValueError:
+                    monto = 0.0
                 municipio = cols[4].strip() if len(cols) >= 5 else "Edomex"
 
                 nombre_boleta = f"BOLETA_{placa}_{folio}_{fecha_hoy}.pdf"
@@ -178,14 +220,16 @@ def consultar_edomex(page, placa):
                     "folio": folio, "fecha": fecha_inf, "motivo": motivo,
                     "monto": monto, "municipio": municipio, "url_boleta": url_boleta, "url_linea": url_linea
                 })
-        return (len(multas) > 0), multas
-    except Exception:
-        return False, []
+        return True, multas, "OK"
+    except Exception as e:
+        err_corto = type(e).__name__
+        print(f"[{placa}] Error EDOMEX ({err_corto}): {str(e)[:150]}")
+        return False, [], f"ERR_{err_corto}"
 
 # --- 5. LÓGICA DE NEGOCIO Y PROCESAMIENTO EN BASE DE DATOS ---
-def procesar_placa(unidad_info, entidad, ok, multas_actuales, registros_db):
+def procesar_placa(unidad_info, entidad, ok, multas_actuales, detalle_estado, registros_db):
     if not ok:
-        return "ERROR_PORTAL"
+        return detalle_estado
 
     placa = unidad_info["placa"]
     hoy = datetime.now()
@@ -386,125 +430,3 @@ def generar_dashboard_html(registros_db):
                             <p class="text-xs text-slate-500">Analista: \${{item.analista}} | Conductor: \${{item.conductor}}</p>
                             <div class="my-3 p-2.5 bg-slate-50 rounded-lg text-xs space-y-1">
                                 <p><span class="font-semibold">Folio:</span> \${{item.folio}} (\${{item.entidad}})</p>
-                                <p><span class="font-semibold">Motivo:</span> \${{item.motivo}}</p>
-                                <p><span class="font-semibold">Monto:</span> <span class="text-red-600 font-bold">\${{item.monto.toLocaleString('es-MX', {{{{style:'currency', currency:'MXN'}}}})}}</span></p>
-                                <p><span class="font-semibold">Límite Pago:</span> \${{item.limite}} (\${{item.dias_vencer}} días)</p>
-                            </div>
-                        </div>
-                        <div class="grid grid-cols-2 gap-2 pt-2 border-t">
-                            <a href="\${{item.url_linea}}" target="_blank" class="text-center bg-blue-600 hover:bg-blue-700 text-white py-1.5 rounded-lg text-xs font-semibold transition">📄 Línea Captura</a>
-                            <a href="\${{item.url_boleta}}" target="_blank" class="text-center bg-slate-700 hover:bg-slate-800 text-white py-1.5 rounded-lg text-xs font-semibold transition">📸 Ver Boleta</a>
-                        </div>
-                    </div>`;
-            }});
-        }}
-        document.getElementById('buscador').addEventListener('input', renderizar);
-        renderizar();
-    </script>
-</body>
-</html>
-"""
-    os.makedirs("docs", exist_ok=True)
-    with open("docs/index.html", "w", encoding="utf-8") as f:
-        f.write(html)
-
-# --- 8. ENVÍO AUTOMÁTICO DE ALERTAS POR EMAIL ---
-def enviar_correo():
-    if not alertas_del_dia:
-        return
-    cuerpo = "Resumen de alertas del día detectadas por el Bot de Infracciones:\n\n" + "\n\n".join(alertas_del_dia)
-    msg = MIMEText(cuerpo)
-    msg["Subject"] = f"🚦 Alertas de Infracciones Flotilla ({len(alertas_del_dia)} novedades)"
-    msg["From"] = GMAIL_USER
-    msg["To"] = EMAIL_DESTINO
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(GMAIL_USER, GMAIL_PASS)
-        server.sendmail(GMAIL_USER, EMAIL_DESTINO, msg.as_string())
-
-def buscar_col(encabezados_norm, candidatos, default=None):
-    for cand in candidatos:
-        if cand in encabezados_norm:
-            return encabezados_norm.index(cand)
-    for idx, h in enumerate(encabezados_norm):
-        for cand in candidatos:
-            if cand in h:
-                return idx
-    return default
-
-# --- 9. EJECUCIÓN DEL FLUJO PRINCIPAL ---
-if __name__ == "__main__":
-    valores_hist = hoja_historial.get_all_values()
-    filas_hist = valores_hist[2:] if len(valores_hist) > 2 else []
-
-    registros_db = {}
-    for idx, r in enumerate(filas_hist):
-        if r and r[0]:
-            row_limpia = list(r)
-            for col_url in [15, 16]:
-                if len(row_limpia) > col_url and "HIPERVINCULO" in row_limpia[col_url]:
-                    partes = row_limpia[col_url].split('"')
-                    if len(partes) >= 2:
-                        row_limpia[col_url] = partes[1]
-            registros_db[r[0]] = {"fila": idx + 3, "data": row_limpia}
-
-    hoy = datetime.now()
-    for folio, info in registros_db.items():
-        r = info["data"]
-        if len(r) >= 15 and r[14] == "ACTIVA" and r[12]:
-            try:
-                dias = (datetime.strptime(r[12], "%Y-%m-%d") - hoy).days
-                hoja_historial.update_cell(info["fila"], 14, dias)
-                r[13] = dias
-            except ValueError:
-                pass
-
-    todas_filas = hoja_placas.get_all_values()
-    encabezados = [h.strip() for h in todas_filas[0]]
-    encabezados_norm = [h.lower() for h in encabezados]
-
-    col_placa = buscar_col(encabezados_norm, ["placa actual", "placa"], 0)
-    col_id = buscar_col(encabezados_norm, ["id actual", "id"])
-    col_num_suc = buscar_col(encabezados_norm, ["num_sucursal", "num sucursal", "no. sucursal", "numero sucursal", "sucursal"])
-    col_nom_suc = buscar_col(encabezados_norm, ["nombre_sucursal", "nombre sucursal"])
-    col_analista = buscar_col(encabezados_norm, ["nombre del analista", "analista", "nombre analista"])
-    col_conductor = buscar_col(encabezados_norm, ["nombre de conductor", "conductor", "nombre conductor"])
-    col_rev_idx = buscar_col(encabezados_norm, ["ultima_revision", "ultima revision", "última revisión"])
-    col_est_idx = buscar_col(encabezados_norm, ["estatus_conexion", "estatus conexion", "estatus"])
-
-    col_rev = (col_rev_idx + 1) if col_rev_idx is not None else (len(encabezados) + 1)
-    col_est = (col_est_idx + 1) if col_est_idx is not None else (len(encabezados) + 2)
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(accept_downloads=True)
-        page = context.new_page()
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
-        for idx, fila in enumerate(todas_filas[1:]):
-            if col_placa is None or len(fila) <= col_placa or not fila[col_placa].strip():
-                continue
-
-            unidad_info = {
-                "placa": fila[col_placa].strip().upper(),
-                "id_actual": fila[col_id].strip() if col_id is not None and len(fila) > col_id else "",
-                "num_sucursal": fila[col_num_suc].strip() if col_num_suc is not None and len(fila) > col_num_suc else "",
-                "nombre_sucursal": fila[col_nom_suc].strip() if col_nom_suc is not None and len(fila) > col_nom_suc else "",
-                "analista": fila[col_analista].strip() if col_analista is not None and len(fila) > col_analista else "",
-                "conductor": fila[col_conductor].strip() if col_conductor is not None and len(fila) > col_conductor else ""
-            }
-
-            ok_cdmx, m_cdmx = consultar_cdmx(page, unidad_info["placa"])
-            st_cdmx = procesar_placa(unidad_info, "CDMX", ok_cdmx, m_cdmx, registros_db)
-
-            ok_edomex, m_edomex = consultar_edomex(page, unidad_info["placa"])
-            st_edomex = procesar_placa(unidad_info, "EDOMEX", ok_edomex, m_edomex, registros_db)
-
-            hoja_placas.update_cell(idx + 2, col_rev, hoy.strftime("%Y-%m-%d %H:%M"))
-            hoja_placas.update_cell(idx + 2, col_est, f"CDMX:{st_cdmx} | EDOMEX:{st_edomex}")
-
-        browser.close()
-
-    formatear_sheets()
-    generar_dashboard_html(registros_db)
-    enviar_correo()
