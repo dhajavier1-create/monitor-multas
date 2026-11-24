@@ -193,4 +193,66 @@ def procesar_placa(unidad_info, entidad, ok, multas_actuales, registros_db):
     folios_actuales = {m["folio"] for m in multas_actuales}
 
     for m in multas_actuales:
-        if m["folio"] not
+        if m["folio"] not in registros_db:
+            plazo = 30 if entidad == "CDMX" else 15
+            fecha_lim_dt = hoy + timedelta(days=plazo)
+            limite_str = fecha_lim_dt.strftime("%Y-%m-%d")
+            dias_vencer = (fecha_lim_dt - hoy).days
+
+            formula_linea = f'=HIPERVINCULO("{m["url_linea"]}"; "📄 Descargar Línea")'
+            formula_boleta = f'=HIPERVINCULO("{m["url_boleta"]}"; "📸 Ver Boleta PDF")'
+
+            nueva_fila = [
+                m["folio"], placa, unidad_info["id_actual"], unidad_info["num_sucursal"],
+                unidad_info["nombre_sucursal"], unidad_info["analista"], unidad_info["conductor"],
+                entidad, m["fecha"], m["motivo"], m["monto"], m["municipio"], limite_str,
+                dias_vencer, "ACTIVA", formula_linea, formula_boleta, hoy_str
+            ]
+            hoja_historial.append_row(nueva_fila, value_input_option="USER_ENTERED")
+
+            fila_mem = list(nueva_fila)
+            fila_mem[15] = m["url_linea"]
+            fila_mem[16] = m["url_boleta"]
+            registros_db[m["folio"]] = {"fila": len(registros_db) + 3, "data": fila_mem}
+
+            alertas_del_dia.append(
+                f"🚨 NUEVA INFRACCIÓN ({entidad}) | Placa: {placa} (ID: {unidad_info['id_actual']}) | "
+                f"Sucursal: {unidad_info['num_sucursal']} - {unidad_info['nombre_sucursal']} | "
+                f"Analista: {unidad_info['analista']} | Folio: {m['folio']} | Motivo: {m['motivo']} | "
+                f"Monto: ${m['monto']:,.2f} | Límite: {limite_str}\n"
+                f"   👉 Boleta PDF: {m['url_boleta']}\n   👉 Línea Captura: {m['url_linea']}"
+            )
+
+    for folio, info in registros_db.items():
+        row = info["data"]
+        if row[1] == placa and row[7] == entidad and row[14] == "ACTIVA":
+            if folio not in folios_actuales:
+                hoja_historial.update_cell(info["fila"], 14, 0)
+                hoja_historial.update_cell(info["fila"], 15, "PAGADA")
+                hoja_historial.update_cell(info["fila"], 18, hoy_str)
+                row[13] = 0
+                row[14] = "PAGADA"
+                alertas_del_dia.append(
+                    f"✅ PAGO CONFIRMADO ({entidad}) | Placa: {placa} | Sucursal: {row[3]} - {row[4]} | "
+                    f"Analista: {row[5]} | Folio: {folio} (${float(row[10]):,.2f}) ya aparece pagado."
+                )
+    return "OK"
+
+# --- 6. FORMATO VISUAL AUTOMÁTICO PARA GOOGLE SHEETS ---
+def formatear_sheets():
+    total_filas = len(hoja_historial.get_all_values())
+    if total_filas < 2:
+        return
+    sheet_id = hoja_historial.id
+    requests_formato = [
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 2, "startColumnIndex": 0, "endColumnIndex": 18},
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": {"red": 0.06, "green": 0.09, "blue": 0.16},
+                        "textFormat": {"foregroundColor": {"red": 1, "green": 1, "blue": 1}, "bold": True, "fontSize": 10},
+                        "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE"
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat,
